@@ -296,6 +296,20 @@
   </div>
 </div>
 
+<!-- ready to print -->
+<div class="sheetmodal" id="readyModal">
+  <div class="card">
+    <h2 id="readyTitle">Ready to print</h2>
+    <p class="hint" id="readyText"></p>
+    <div class="btns">
+      <button class="primary" style="flex:1" id="readyGo">Print</button>
+      <button id="readySave">Save PDF</button>
+    </div>
+    <div class="btns"><button class="wide" id="readyCancel">Cancel</button></div>
+    <p class="hint" id="readyHow"></p>
+  </div>
+</div>
+
 <!-- after-print confirmation -->
 <div class="sheetmodal" id="confirmModal">
   <div class="card">
@@ -311,7 +325,7 @@
 
 <script>
 "use strict";
-const APP_VERSION = "1.0.0";
+const APP_VERSION = "1.1.0";
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const store = {
@@ -561,13 +575,197 @@ $("delProfile").onclick = async () => {
   selectAccount(state.data.profiles.length ? 0 : "new");
 };
 
-/* ============ printing ============ */
-function doPrint(mode){
-  printMode = mode; render();
-  // Let layout settle before opening the print dialog (iOS needs a beat)
-  return new Promise(res => setTimeout(() => { window.print(); setTimeout(res, 300); }, 150));
+/* ============ PDF engine ============
+   iPhone home-screen apps ignore the browser's print command, so the app builds a real
+   Letter-size PDF itself and hands it to the share sheet, where Print (AirPrint) lives.
+   No libraries, nothing leaves the device. Coordinates below are inches from the paper's
+   top-left corner; for text, y is the baseline. */
+const WINANSI = {"€":128,"…":133,"‘":145,"’":146,"“":147,"”":148,"•":149,"–":150,"—":151};
+function pdfStr(s){
+  let out = "";
+  for (const ch of String(s)) {
+    let c = WINANSI[ch] || ch.codePointAt(0);
+    if (!WINANSI[ch] && (c > 255 || c < 32)) c = 63;
+    const b = String.fromCharCode(c);
+    out += (b === "(" || b === ")" || b === "\\") ? "\\" + b : b;
+  }
+  return "(" + out + ")";
 }
-$("printBtn").onclick = async () => {
+const measureCtx = document.createElement("canvas").getContext("2d");
+function textW(s, size, font){   // width in points
+  s = String(s);
+  if (font === "mono") return 0.6 * size * s.length;          // Courier is exactly 0.6 em per character
+  measureCtx.font = `${font === "bold" ? "bold " : ""}100px Helvetica, Arial, sans-serif`;
+  return measureCtx.measureText(s).width / 100 * size;
+}
+const f2 = n => (Math.round(n*1000)/1000).toString();
+class PdfPage {
+  constructor(){ this.ops = []; this.images = []; }
+  X(x){ return f2(x*72); } Y(y){ return f2(792 - y*72); }
+  text(x, y, s, o = {}){
+    s = String(s ?? ""); if (!s) return 0;
+    const size = o.size || 10, font = o.font || "reg", w = textW(s, size, font);
+    let xx = x*72; if (o.align === "right") xx -= w; else if (o.align === "center") xx -= w/2;
+    const f = font === "bold" ? "F2" : font === "mono" ? "F3" : "F1";
+    this.ops.push(`BT /${f} ${size} Tf ${f2(xx)} ${this.Y(y)} Td ${pdfStr(s)} Tj ET`);
+    return w/72;
+  }
+  fillText(x, y, xEnd, s, size, ch){  // text followed by a run of fill characters up to xEnd
+    const used = this.text(x, y, s, {size});
+    const start = x + used + 0.05, cw = textW(ch, size, "reg")/72, n = Math.floor((xEnd - start)/cw);
+    if (s && n > 0) this.text(start, y, ch.repeat(n), {size});
+  }
+  line(x1, y1, x2, y2, w = 0.75, gray = 0){ this.ops.push(`${gray} G ${w} w ${this.X(x1)} ${this.Y(y1)} m ${this.X(x2)} ${this.Y(y2)} l S 0 G`); }
+  rect(x, y, w, h, lw = 1){ this.ops.push(`${lw} w ${this.X(x)} ${this.Y(y+h)} ${f2(w*72)} ${f2(h*72)} re S`); }
+  fill(x, y, w, h){ this.ops.push(`${this.X(x)} ${this.Y(y+h)} ${f2(w*72)} ${f2(h*72)} re f`); }
+  image(bytes, pxW, pxH, x, y, w, h){
+    const name = "Im" + (this.images.length + 1); this.images.push({name, bytes, pxW, pxH});
+    this.ops.push(`q ${f2(w*72)} 0 0 ${f2(h*72)} ${this.X(x)} ${this.Y(y+h)} cm /${name} Do Q`);
+  }
+  stamp(x, y, s, size, deg){   // light red rotated text (VOID)
+    const r = deg*Math.PI/180, c = Math.cos(r), n = Math.sin(r);
+    this.ops.push(`q 0.86 0.55 0.53 rg BT /F2 ${size} Tf ${f2(c)} ${f2(n)} ${f2(-n)} ${f2(c)} ${this.X(x)} ${this.Y(y)} Tm ${pdfStr(s)} Tj ET Q`);
+  }
+}
+function bytesToLatin1(u8){ let s = ""; for (let i=0;i<u8.length;i+=0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i+0x8000)); return s; }
+function buildPdf(page, matrix){
+  const objs = [];
+  const add = body => { objs.push(body); return objs.length; };
+  const font = base => add(`<< /Type /Font /Subtype /Type1 /BaseFont /${base} /Encoding /WinAnsiEncoding >>`);
+  const cat = add(null), pages = add(null), pg = add(null);
+  const F1 = font("Helvetica"), F2 = font("Helvetica-Bold"), F3 = font("Courier-Bold");
+  const content = "q " + matrix + "\n" + page.ops.join("\n") + "\nQ";
+  const cont = add(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
+  const xo = page.images.map(im => {
+    const data = bytesToLatin1(im.bytes);
+    return `/${im.name} ${add(`<< /Type /XObject /Subtype /Image /Width ${im.pxW} /Height ${im.pxH} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${data.length} >>\nstream\n${data}\nendstream`)} 0 R`;
+  }).join(" ");
+  objs[cat-1] = `<< /Type /Catalog /Pages ${pages} 0 R >>`;
+  objs[pages-1] = `<< /Type /Pages /Kids [${pg} 0 R] /Count 1 >>`;
+  objs[pg-1] = `<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 612 792] /Contents ${cont} 0 R /Resources << /Font << /F1 ${F1} 0 R /F2 ${F2} 0 R /F3 ${F3} 0 R >>${xo ? ` /XObject << ${xo} >>` : ""} >> >>`;
+  let out = "%PDF-1.4\n%\xE2\xE3\xCF\xD3\n"; const offs = [];
+  objs.forEach((o, i) => { offs.push(out.length); out += `${i+1} 0 obj\n${o}\nendobj\n`; });
+  const xref = out.length;
+  out += `xref\n0 ${objs.length+1}\n0000000000 65535 f \n` + offs.map(o => String(o).padStart(10,"0") + " 00000 n \n").join("");
+  out += `trailer\n<< /Size ${objs.length+1} /Root ${cat} 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  const u8 = new Uint8Array(out.length); for (let i=0;i<out.length;i++) u8[i] = out.charCodeAt(i) & 255;
+  return u8;
+}
+function pdfMatrix(mode){
+  const s = state.settings;
+  if (mode === "calib") return "";
+  // printer correction: paper point t lands at o + k*d, so draw at d = (t - o)/k
+  let m = `${f2(1/s.kx)} 0 0 ${f2(1/s.ky)} ${f2(-72*s.ox/s.kx)} ${f2(792 - (792 - 72*s.oy)/s.ky)} cm`;
+  if (s.rotate) m += " -1 0 0 -1 612 792 cm";
+  if (mode !== "edge") m += ` 1 0 0 1 ${f2(72*s.dx)} ${f2(-72*s.dy)} cm`;
+  return m;
+}
+function drawStub(pg, S, p, c, label){
+  pg.text(.5, S+.52, p.name, {size:10, font:"bold"});
+  pg.text(.5, S+.72, `${(p.nick || p.bank || "").toUpperCase()} • ${label.toUpperCase()}`, {size:7});
+  if (c.num) pg.text(8.0, S+.52, "No. " + c.num, {size:11, font:"bold", align:"right"});
+  const rows = [["DATE", fmtDate(c.date)], ["PAY TO", c.payee], ["AMOUNT", c.cents ? "$" + money(c.cents) : ""], ["MEMO", c.memo], ["NOTE", c.stub], ["ACCOUNT", "ending " + String(p.account||"").slice(-4)]];
+  rows.forEach(([k,v], i) => { const t = S + 1.0 + i*.26;
+    pg.text(.5, t+.17, k, {size:7}); pg.text(1.8, t+.17, v, {size:10}); pg.line(.5, t+.24, 8.0, t+.24, .5, .7); });
+}
+function drawCheck(pg, T, p, c, isVoid){
+  const n = c.cents ? money(c.cents) : "", box = n ? "*".repeat(Math.max(0, 12 - n.length)) + n : "";
+  pg.text(.35, T+.42, p.name, {size:10, font:"bold"}); pg.text(.35, T+.59, p.addr1, {size:10}); pg.text(.35, T+.76, p.addr2, {size:10});
+  pg.text(4.7, T+.42, p.bank, {size:9, font:"bold", align:"center"}); pg.text(4.7, T+.57, p.bankcity, {size:9, align:"center"});
+  pg.text(8.15, T+.46, c.num, {size:12, font:"bold", align:"right"}); pg.text(8.15, T+.62, p.frac, {size:7.5, align:"right"});
+  pg.text(5.6, T+1.07, "DATE", {size:8}); pg.line(6.05, T+1.08, 8.15, T+1.08); pg.text(7.1, T+1.02, fmtDate(c.date), {size:11, align:"center"});
+  pg.text(.35, T+1.4, "PAY TO THE", {size:7}); pg.text(.35, T+1.5, "ORDER OF", {size:7});
+  pg.line(1.15, T+1.55, 6.5, T+1.55); pg.fillText(1.18, T+1.5, 6.45, c.payee, 11, "*");
+  pg.rect(6.65, T+1.24, 1.5, .32, 1); pg.text(6.71, T+1.46, "$", {size:11.5, font:"bold"}); pg.text(6.86, T+1.46, box, {size:11.5, font:"mono"});
+  pg.line(.35, T+1.98, 7.45, T+1.98); pg.fillText(.38, T+1.93, 7.4, c.cents ? amountWords(c.cents) : "", 10.5, "*");
+  pg.text(7.5, T+1.97, "DOLLARS", {size:7});
+  pg.text(.35, T+2.72, "MEMO", {size:7}); pg.line(.8, T+2.72, 4.1, T+2.72); pg.text(.83, T+2.67, c.memo, {size:10});
+  pg.line(4.9, T+2.72, 8.15, T+2.72); pg.text(6.525, T+2.86, "AUTHORIZED SIGNATURE", {size:7, align:"center"});
+  drawMicr(pg, T, p, c.num);
+  if (isVoid) pg.stamp(2.4, T+2.3, "VOID", 80, 12);
+}
+function drawMicr(pg, T, p, num){
+  const s = state.settings, base = T + 3.5 - (MICR_BOTTOM - s.mdy);   // baseline = bottom of the characters
+  const chars = micrChars(p, num).map(o => ({...o, right: 8.5 - (POS1 + (o.pos-1)*PITCH - s.mdx)}));
+  if (!userFontLoaded) {
+    const u = 0.013;
+    chars.forEach(({ch, right}) => (GLYPHS[ch]||[]).forEach(([gx,gy,gw,gh]) => pg.fill(right - 0.091 + gx*u, base - GLYPH_H + gy*u, gw*u, gh*u)));
+    return;
+  }
+  // Real MICR font: render the code line at 1200 dpi and place it as an image
+  const DPI = 1200, x0 = 0.2, w = 8.1, h = 0.36, baseIn = 0.27;
+  const cv = document.createElement("canvas"); cv.width = Math.round(w*DPI); cv.height = Math.round(h*DPI);
+  const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0,0,cv.width,cv.height);
+  ctx.fillStyle = "#000"; ctx.textAlign = "right"; ctx.textBaseline = "alphabetic"; ctx.font = `${s.fsize*DPI/72}px UserMICR`;
+  const map = {T:s.fmap[0]||"A", A:s.fmap[1]||"B", U:s.fmap[2]||"C", D:s.fmap[3]||"D"};
+  chars.forEach(({ch, right}) => ctx.fillText(/\d/.test(ch) ? ch : map[ch], (right - x0)*DPI, baseIn*DPI));
+  const jpg = unb64(cv.toDataURL("image/jpeg", 1.0).split(",")[1]);
+  pg.image(jpg, cv.width, cv.height, x0, base - baseIn, w, h);
+}
+function drawCalib(pg){
+  pg.line(1, 1, 7, 1, 1.5); pg.line(1, 1, 1, 9, 1.5); pg.line(.75, 1, 1.25, 1, .75); pg.line(1, .75, 1, 1.25, .75);
+  pg.text(1.15, .85, "+ is the corner where the two bars meet", {size:9});
+  [["Measuring sheet", "bold"], ["A: left paper edge to the + (should be 1 in)"], ["B: top paper edge to the + (should be 1 in)"],
+   ["C: length of the horizontal bar (should be 6 in)"], ["D: length of the vertical bar (should be 8 in)"], [""], ["Enter what you actually measure in the app."]]
+   .forEach(([t,f], i) => pg.text(1.4, 1.55 + i*.24, t, {size:11, font:f || "reg"}));
+}
+function drawEdge(pg){
+  pg.text(2, 5.2, "Edge test", {size:12, font:"bold"});
+  pg.text(2, 5.45, "Lines are measured from the paper edge. Note which ones", {size:11});
+  pg.text(2, 5.65, "printed fully at the BOTTOM and at the TOP.", {size:11});
+  [[0.125,"1/8"],[0.1875,"3/16 (bank line)"],[0.25,"1/4"],[0.375,"3/8"]].forEach(([d,l], i) => {
+    const x = 0.5 + i*1.9;
+    pg.line(x, 11-d, x+1.7, 11-d, 1); pg.text(x, 11-d-.05, "bottom " + l, {size:7});
+    pg.line(x, d, x+1.7, d, 1); pg.text(x, d+.14, "top " + l, {size:7});
+  });
+}
+function makePdf(mode, p, c){
+  const pg = new PdfPage(), s = state.settings;
+  if (mode === "calib") drawCalib(pg);
+  else if (mode === "edge") drawEdge(pg);
+  else {
+    if (s.stubs) { drawStub(pg, 0, p, c, "Payee copy"); drawStub(pg, 4.0, p, c, "Your records"); }
+    drawCheck(pg, s.checkTop, p, c, mode === "void");
+  }
+  return buildPdf(pg, pdfMatrix(mode));
+}
+
+/* ============ print flow ============ */
+const canShareFiles = () => !!(navigator.canShare && navigator.maxTouchPoints > 0 &&
+  navigator.canShare({files:[new File([new Uint8Array(1)], "t.pdf", {type:"application/pdf"})]}));
+let ready = null;   // {bytes, name, onDone}
+function offerPrint(bytes, name, title, text, onDone){
+  ready = {bytes, name, onDone};
+  $("readyTitle").textContent = title; $("readyText").textContent = text;
+  $("readyHow").textContent = canShareFiles()
+    ? "Tap Print, then choose Print in the share sheet. Pick your printer and keep the paper size Letter."
+    : "Print opens the PDF. Print it at Actual size (100%), not Fit to page.";
+  $("readyModal").classList.add("on");
+}
+$("readyGo").onclick = () => {     // must stay synchronous up to share() so iOS keeps the tap
+  if (!ready) return;
+  const file = new File([ready.bytes], ready.name, {type:"application/pdf"});
+  if (canShareFiles()) {
+    navigator.share({files:[file]}).then(() => finishReady(), e => {
+      if (e.name !== "AbortError") { $("readyHow").textContent = "Your phone blocked the share sheet. Tap Print again."; }
+    });
+  } else {
+    const url = URL.createObjectURL(file);
+    if (!window.open(url, "_blank")) { const a = document.createElement("a"); a.href = url; a.download = ready.name; a.click(); }
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    finishReady();
+  }
+};
+$("readySave").onclick = () => {
+  if (!ready) return;
+  const url = URL.createObjectURL(new Blob([ready.bytes], {type:"application/pdf"})), a = document.createElement("a");
+  a.href = url; a.download = ready.name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+};
+$("readyCancel").onclick = () => { $("readyModal").classList.remove("on"); ready = null; pendingCheck = null; };
+function finishReady(){ $("readyModal").classList.remove("on"); const r = ready; ready = null; if (r && r.onDone) r.onDone(); }
+
+$("printBtn").onclick = () => {
   const p = profile(), c = draft();
   if (!p) { flash("checkMsg","Add your bank account first (Accounts tab).",true); return; }
   const miss = [];
@@ -577,10 +775,11 @@ $("printBtn").onclick = async () => {
       && !confirm(`Check #${c.num} is already in your register for this account. Print anyway?`)) return;
   if (c.cents >= 1000000 && !confirm(`This check is for $${money(c.cents)}. Continue?`)) return;
   $("checkMsg").textContent = "";
-  await doPrint("check");
-  $("confirmText").textContent = `Check #${c.num} to ${c.payee} for $${money(c.cents)}.`;
-  $("confirmModal").classList.add("on");
   pendingCheck = {p, c};
+  offerPrint(makePdf("check", p, c), `check-${c.num}.pdf`, `Check #${c.num}`, `${c.payee}, $${money(c.cents)}. Load check paper first.`, () => {
+    $("confirmText").textContent = `Check #${c.num} to ${c.payee} for $${money(c.cents)}.`;
+    $("confirmModal").classList.add("on");
+  });
 };
 let pendingCheck = null;
 async function recordPending(status){
@@ -601,7 +800,7 @@ async function recordPending(status){
 $("confOk").onclick = () => recordPending("issued");
 $("confVoid").onclick = () => recordPending("void");
 $("confCancel").onclick = () => recordPending(null);
-$("testBtn").onclick = async () => { await doPrint("void"); printMode = "check"; render(); };
+$("testBtn").onclick = () => offerPrint(makePdf("void", profile() || sampleProfile(), draft()), "check-void-test.pdf", "VOID test", "Use plain paper, then hold it over a blank check sheet to compare.");
 $("clearBtn").onclick = () => { ["c_payee","c_amount","c_memo","c_stub"].forEach(id => $(id).value = ""); render(); };
 ["c_date","c_num","c_payee","c_amount","c_memo","c_stub"].forEach(id => $(id).addEventListener("input", () => {
   if (id === "c_amount") { const v = $("c_amount").value; flash("checkMsg", v && !parseAmount(v) ? "Amount should look like 125.00" : "", true); }
@@ -668,8 +867,8 @@ function describeCalib(){
   $("calibMsg").textContent = (s.kx === 1 && s.ky === 1 && !s.ox && !s.oy) ? "No printer correction applied (right for computer printing with margins set to None)."
     : `Correcting: shift ${s.ox.toFixed(3)} in right, ${s.oy.toFixed(3)} in down, size ${(s.kx*100).toFixed(1)}% x ${(s.ky*100).toFixed(1)}%.`;
 }
-$("calibPrint").onclick = async () => { await doPrint("calib"); printMode = "check"; render(); };
-$("edgePrint").onclick = async () => { await doPrint("edge"); printMode = "check"; render(); };
+$("calibPrint").onclick = () => offerPrint(makePdf("calib"), "measuring-sheet.pdf", "Measuring sheet", "Use plain paper.");
+$("edgePrint").onclick = () => offerPrint(makePdf("edge"), "edge-test.pdf", "Edge test", "Use plain paper.");
 $("calibSave").onclick = () => {
   const px = parseMeasure($("m_px").value), py = parseMeasure($("m_py").value), lh = parseMeasure($("m_lh").value), lv = parseMeasure($("m_lv").value);
   if ([px,py,lh,lv].some(v => v === null)) return flash("calibMsg","Fill in all four measurements.",true);
@@ -738,7 +937,7 @@ $("wipeBtn").onclick = () => {
 function lock(){
   vaultKey = null; vaultSalt = null; state.data = emptyData(); state.current = null; pendingCheck = null;
   ["c_payee","c_amount","c_memo","c_stub"].forEach(id => $(id).value = ""); fillProfileForm(null);
-  $("confirmModal").classList.remove("on"); showGate();
+  $("confirmModal").classList.remove("on"); $("readyModal").classList.remove("on"); ready = null; showGate();
 }
 $("lockBtn").onclick = lock;
 function showGate(){
@@ -784,7 +983,6 @@ document.addEventListener("visibilitychange", () => {
   else if (vaultKey && hiddenAt && Date.now() - hiddenAt > 2*60*1000) lock();
 });
 addEventListener("resize", fitPreview);
-addEventListener("afterprint", () => { if (printMode !== "check" && !$("confirmModal").classList.contains("on")) { printMode = "check"; render(); } });
 
 /* ============ start ============ */
 (function init(){
