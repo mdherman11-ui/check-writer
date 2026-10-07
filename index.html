@@ -1,0 +1,798 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Security: only this site's own files may load. No outside servers, no analytics, nothing is ever sent anywhere. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data: blob:; img-src 'self' data: blob:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101828">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Checks">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<title>Check Writer</title>
+<style>
+  :root { --ink:#1d2330; --muted:#667085; --line:#d0d5dd; --bg:#f2f4f7; --card:#fff; --accent:#1f4fd1; --danger:#b42318; --ok:#067647; --bar:#101828; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; }
+  body { font:15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color:var(--ink); background:var(--bg);
+         padding-top:env(safe-area-inset-top); padding-bottom:calc(64px + env(safe-area-inset-bottom)); }
+  header { position:sticky; top:0; z-index:10; background:var(--bar); color:#fff; padding:10px 16px; display:flex; align-items:center; gap:10px;
+           margin-top:calc(-1 * env(safe-area-inset-top)); padding-top:calc(10px + env(safe-area-inset-top)); }
+  header h1 { font-size:17px; margin:0; font-weight:600; flex:1; }
+  header button { background:#344054; color:#fff; border:0; padding:6px 12px; font-size:14px; }
+  nav { position:fixed; left:0; right:0; bottom:0; z-index:10; background:#fff; border-top:1px solid var(--line); display:flex;
+        padding-bottom:env(safe-area-inset-bottom); }
+  nav button { flex:1; border:0; border-radius:0; background:none; padding:9px 2px 8px; font-size:11px; color:var(--muted); display:flex; flex-direction:column; align-items:center; gap:2px; }
+  nav button svg { width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  nav button.on { color:var(--accent); }
+  .page { display:none; max-width:1100px; margin:0 auto; padding:14px; }
+  .page.on { display:block; }
+  @media (min-width: 1000px) { #pg-write.on { display:grid; grid-template-columns:400px 1fr; gap:16px; align-items:start; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:14px; }
+  .card h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 8px; }
+  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  label.chk { display:flex; align-items:center; gap:8px; font-size:14px; color:var(--ink); }
+  label.chk input { width:auto; }
+  input, select { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:8px; font:inherit; font-size:16px; background:#fff; color:var(--ink); }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  button { padding:9px 14px; border:1px solid var(--line); background:#fff; border-radius:8px; font:inherit; cursor:pointer; color:var(--ink); }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button.danger { color:var(--danger); }
+  button.wide { width:100%; }
+  .btns { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+  .msg { font-size:13px; margin-top:8px; min-height:1px; }
+  .msg.err { color:var(--danger); } .msg.ok { color:var(--ok); }
+  .hint { font-size:13px; color:var(--muted); margin:6px 0; }
+  ol.hint { padding-left:18px; }
+  #previewWrap { overflow:hidden; background:#e4e7ec; border-radius:12px; padding:10px; }
+  #scaler { transform-origin:top left; }
+  .reg-item { display:grid; grid-template-columns:auto 1fr auto; gap:2px 10px; padding:10px 0; border-bottom:1px solid var(--line); align-items:center; }
+  .reg-item .n { font-weight:700; font-variant-numeric:tabular-nums; }
+  .reg-item .amt { font-weight:600; text-align:right; font-variant-numeric:tabular-nums; }
+  .reg-item .sub { grid-column:2 / 4; font-size:12px; color:var(--muted); }
+  .reg-item.void .payee, .reg-item.void .amt { text-decoration:line-through; color:var(--danger); }
+  .pill { font-size:11px; padding:2px 7px; border-radius:20px; background:#eef2ff; color:var(--accent); }
+  .pill.cleared { background:#ecfdf3; color:var(--ok); } .pill.void { background:#fef3f2; color:var(--danger); }
+  .totals { display:flex; gap:12px; flex-wrap:wrap; font-size:13px; color:var(--muted); }
+  .totals b { color:var(--ink); }
+  .overlay { position:fixed; inset:0; background:var(--bar); z-index:50; display:none; align-items:center; justify-content:center; padding:20px; }
+  .overlay.on { display:flex; }
+  .overlay .card { width:100%; max-width:400px; }
+  .sheetmodal { position:fixed; inset:0; background:rgba(16,24,40,.5); z-index:40; display:none; align-items:flex-end; justify-content:center; }
+  .sheetmodal.on { display:flex; }
+  .sheetmodal .card { width:100%; max-width:520px; border-radius:16px 16px 0 0; margin:0; padding-bottom:calc(16px + env(safe-area-inset-bottom)); }
+
+  /* ---------- printable sheet: real inches ---------- */
+  #sheet { width:8.5in; height:11in; background:#fff; position:relative; overflow:hidden; box-shadow:0 2px 12px rgba(0,0,0,.15);
+           font-family:"Helvetica Neue", Helvetica, Arial, sans-serif; color:#000; }
+  #paper, #rot { position:absolute; left:0; top:0; width:8.5in; height:11in; transform-origin:0 0; }
+  #rot { transform-origin:50% 50%; }
+  #sheet .abs { position:absolute; white-space:nowrap; }
+  .sec { position:absolute; left:0; width:8.5in; }
+  .guide { outline:1px dashed #f04438; }
+  .lbl { font-size:7pt; text-transform:uppercase; letter-spacing:.04em; }
+  .uline { border-bottom:.75pt solid #000; }
+  .fill { overflow:hidden; display:flex; }
+  .fill .txt { flex:none; padding-right:4px; }
+  .fill .stars { flex:1; overflow:hidden; letter-spacing:1px; }
+  .stub td { padding:3px 0; border-bottom:.5pt solid #bbb; }
+  .micrch { position:absolute; }
+  .voidstamp { position:absolute; font-size:72pt; font-weight:800; color:rgba(180,35,24,.35); transform:rotate(-12deg); letter-spacing:.2em; }
+
+  @media print {
+    @page { size:letter; margin:0; }
+    body { background:#fff; padding:0; }
+    header, nav, .no-print, .overlay, .sheetmodal, #pg-write > aside, .page:not(#pg-write) { display:none !important; }
+    #pg-write { display:block !important; padding:0; margin:0; max-width:none; }
+    #previewWrap { padding:0; background:none; overflow:visible; border-radius:0; }
+    #scaler { transform:none !important; width:auto !important; height:auto !important; }
+    #sheet { box-shadow:none; width:var(--printW, 8.5in); height:var(--printH, 11in); }
+    #paper { transform:var(--calib, none); }
+    .guide { outline:none !important; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Check Writer</h1>
+  <button id="lockBtn" class="no-print">Lock</button>
+</header>
+
+<!-- ================= WRITE ================= -->
+<div class="page on" id="pg-write">
+  <aside>
+    <div class="card">
+      <h2>Write a check</h2>
+      <label>From account</label><select id="acctSel"></select>
+      <div class="row">
+        <div><label>Date</label><input id="c_date" type="date"></div>
+        <div><label>Check number</label><input id="c_num" inputmode="numeric"></div>
+      </div>
+      <label>Pay to the order of</label><input id="c_payee" autocomplete="off" list="payeeList"><datalist id="payeeList"></datalist>
+      <label>Amount ($)</label><input id="c_amount" inputmode="decimal" placeholder="0.00" autocomplete="off">
+      <label>Memo</label><input id="c_memo" autocomplete="off">
+      <label>Stub note (prints on stubs only)</label><input id="c_stub" autocomplete="off">
+      <div class="msg" id="checkMsg"></div>
+      <div class="btns">
+        <button class="primary" id="printBtn" style="flex:1">Print check</button>
+        <button id="testBtn">Print VOID test</button>
+        <button id="clearBtn">Clear</button>
+      </div>
+      <p class="hint">Sign every check by hand in ink after printing.</p>
+    </div>
+  </aside>
+  <section>
+    <p class="hint no-print">Preview of the full 8.5 x 11 sheet.</p>
+    <div id="previewWrap"><div id="scaler"><div id="sheet"><div id="paper"><div id="rot"></div></div></div></div></div>
+  </section>
+</div>
+
+<!-- ================= REGISTER ================= -->
+<div class="page" id="pg-register">
+  <div class="card">
+    <h2>Check register</h2>
+    <div class="row">
+      <div><label>Account</label><select id="regAcct"></select></div>
+      <div><label>Search</label><input id="regSearch" placeholder="Payee, memo, number"></div>
+    </div>
+    <div class="totals" id="regTotals" style="margin-top:10px"></div>
+    <div id="regList"></div>
+    <div class="btns"><button id="exportCsv">Export CSV</button></div>
+  </div>
+</div>
+
+<!-- ================= ACCOUNTS ================= -->
+<div class="page" id="pg-accounts">
+  <div class="card">
+    <h2>Bank account</h2>
+    <label>Saved accounts</label><select id="profileSel"></select>
+    <label>Nickname</label><input id="p_nick" placeholder="e.g. Joint Checking">
+    <label>Name on account</label><input id="p_name">
+    <label>Address line 1</label><input id="p_addr1">
+    <label>Address line 2 (city, state, ZIP)</label><input id="p_addr2">
+    <div class="row">
+      <div><label>Bank name</label><input id="p_bank"></div>
+      <div><label>Bank city, state</label><input id="p_bankcity"></div>
+    </div>
+    <div class="row">
+      <div><label>Routing number</label><input id="p_routing" inputmode="numeric" maxlength="9" autocomplete="off"></div>
+      <div><label>Account number</label><input id="p_account" inputmode="numeric" maxlength="17" autocomplete="off"></div>
+    </div>
+    <div class="row">
+      <div><label>Fractional routing (optional)</label><input id="p_frac" placeholder="e.g. 12-3456/7890"></div>
+      <div><label>Next check number</label><input id="p_next" inputmode="numeric"></div>
+    </div>
+    <label>Bank code line layout</label>
+    <select id="p_format">
+      <option value="personal">Personal: routing, account, check number</option>
+      <option value="business">Business: check number before routing</option>
+    </select>
+    <div class="msg" id="profileMsg"></div>
+    <div class="btns">
+      <button class="primary" id="saveProfile">Save account</button>
+      <button id="newProfile">Add another</button>
+      <button class="danger" id="delProfile">Delete</button>
+    </div>
+    <p class="hint">Copy the routing and account numbers from a real check or your bank's website. Pick a starting check number well above your paper checkbook's numbers so the two never overlap.</p>
+  </div>
+</div>
+
+<!-- ================= PRINTER ================= -->
+<div class="page" id="pg-printer">
+  <div class="card">
+    <h2>Step 1: Measure your printer</h2>
+    <p class="hint">iPhone printing adds its own margins and may shrink the page slightly. This step measures that so the check lands in the right spot. Use plain paper.</p>
+    <button class="wide" id="calibPrint">Print measuring sheet</button>
+    <p class="hint">With a ruler, measure on the printed page (decimals or fractions like 1 1/16 both work):</p>
+    <div class="row">
+      <div><label>A: left paper edge to the + (in)</label><input id="m_px" inputmode="decimal"></div>
+      <div><label>B: top paper edge to the + (in)</label><input id="m_py" inputmode="decimal"></div>
+    </div>
+    <div class="row">
+      <div><label>C: length of the long horizontal bar (in)</label><input id="m_lh" inputmode="decimal"></div>
+      <div><label>D: length of the long vertical bar (in)</label><input id="m_lv" inputmode="decimal"></div>
+    </div>
+    <div class="msg" id="calibMsg"></div>
+    <div class="btns"><button class="primary" id="calibSave">Apply measurements</button><button id="calibReset">Reset (computer printing)</button></div>
+  </div>
+
+  <div class="card">
+    <h2>Step 2: Check the edges</h2>
+    <p class="hint">The bank code line must print 3/16 in from the bottom edge. Some printers cannot print that close to the edge. This sheet shows which edge lines your printer can reach.</p>
+    <button class="wide" id="edgePrint">Print edge test</button>
+    <p class="hint">If the 3/16 line is missing at the bottom but present at the top, turn on the option below and load check paper with the check end going in first (upside down).</p>
+    <label class="chk"><input type="checkbox" id="s_rotate"> Print upside down (feed check end first)</label>
+  </div>
+
+  <div class="card">
+    <h2>Step 3: Fine tune</h2>
+    <p class="hint">Print a VOID test on plain paper, hold it over a blank check sheet against a window, and nudge if needed.</p>
+    <div class="row">
+      <div><label>Check top edge on sheet (in)</label><input id="s_checkTop" type="number" step="0.0625"></div>
+      <div><label>Print stubs</label><select id="s_stubs"><option value="1">Yes</option><option value="0">No</option></select></div>
+    </div>
+    <div class="row">
+      <div><label>Nudge right (in)</label><input id="s_dx" type="number" step="0.03125"></div>
+      <div><label>Nudge down (in)</label><input id="s_dy" type="number" step="0.03125"></div>
+    </div>
+    <div class="row">
+      <div><label>Bank code line right (in)</label><input id="s_mdx" type="number" step="0.01"></div>
+      <div><label>Bank code line down (in)</label><input id="s_mdy" type="number" step="0.01"></div>
+    </div>
+    <label class="chk"><input type="checkbox" id="s_guides"> Show section outlines in preview</label>
+  </div>
+
+  <div class="card">
+    <h2>Bank code font (MICR)</h2>
+    <p class="hint" id="fontStatus"></p>
+    <label>Load font file (.ttf or .otf from Files)</label><input type="file" id="fontFile" accept=".ttf,.otf,.woff,.woff2,font/*,application/octet-stream">
+    <div class="row">
+      <div><label>Font size (pt)</label><input id="s_fsize" type="number" step="0.5"></div>
+      <div><label>Symbol keys</label><input id="s_fmap" placeholder="ABCD"></div>
+    </div>
+    <p class="hint">Symbol keys are the letters the font uses for transit, amount, on-us and dash, in that order. GnuMICR uses ABCD.</p>
+    <div class="btns"><button id="clearFont">Use built-in glyphs</button></div>
+  </div>
+</div>
+
+<!-- ================= SECURITY ================= -->
+<div class="page" id="pg-security">
+  <div class="card">
+    <h2>Backups</h2>
+    <p class="hint" id="backupStatus"></p>
+    <p class="hint">A backup is a single encrypted file. Save it to iCloud Drive or Files. It can only be opened with your passphrase.</p>
+    <div class="btns">
+      <button class="primary" id="backupBtn">Save backup</button>
+      <button id="restoreBtn">Restore from backup</button>
+      <input type="file" id="restoreFile" accept=".json,.cwbackup,application/json,*/*" style="display:none">
+    </div>
+    <div class="msg" id="backupMsg"></div>
+  </div>
+  <div class="card">
+    <h2>Passphrase</h2>
+    <p class="hint">Your accounts and check history are encrypted on this device with AES-256 using your passphrase. There is no recovery if you forget it, so keep it in your password manager.</p>
+    <label>Current passphrase</label><input type="password" id="pwOld" autocomplete="current-password">
+    <label>New passphrase</label><input type="password" id="pwNew" autocomplete="new-password">
+    <div class="msg" id="pwMsg"></div>
+    <div class="btns"><button id="pwChange">Change passphrase</button></div>
+  </div>
+  <div class="card">
+    <h2>Danger zone</h2>
+    <p class="hint">Erases every account, the register, settings and the font from this device. Make a backup first.</p>
+    <button class="danger" id="wipeBtn">Erase everything on this device</button>
+  </div>
+  <p class="hint" style="text-align:center" id="versionLine"></p>
+</div>
+
+<nav class="no-print">
+  <button data-pg="write" class="on"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13 7l4 4"/></svg>Write</button>
+  <button data-pg="register"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>Register</button>
+  <button data-pg="accounts"><svg viewBox="0 0 24 24"><path d="M3 10l9-6 9 6"/><path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 20h18"/></svg>Accounts</button>
+  <button data-pg="printer"><svg viewBox="0 0 24 24"><path d="M7 9V3h10v6"/><path d="M5 9h14a2 2 0 0 1 2 2v6h-4v4H7v-4H3v-6a2 2 0 0 1 2-2z"/></svg>Printer</button>
+  <button data-pg="security"><svg viewBox="0 0 24 24"><path d="M6 11h12v10H6z"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Security</button>
+</nav>
+
+<!-- first run / unlock -->
+<div class="overlay" id="gate">
+  <div class="card" id="gateSetup" style="display:none">
+    <h2>Welcome</h2>
+    <p class="hint">Create a passphrase. It encrypts your bank details and check history on this device. Use something long that you will not forget, and save it in your password manager.</p>
+    <label>Passphrase (10+ characters)</label><input type="password" id="setupPw" autocomplete="new-password">
+    <label>Type it again</label><input type="password" id="setupPw2" autocomplete="new-password">
+    <div class="msg err" id="setupMsg"></div>
+    <div class="btns"><button class="primary wide" id="setupBtn">Create</button></div>
+    <div class="btns"><button class="wide" id="setupRestore">Restore from a backup instead</button></div>
+  </div>
+  <div class="card" id="gateUnlock" style="display:none">
+    <h2>Unlock</h2>
+    <label>Passphrase</label><input type="password" id="unlockPw" autocomplete="current-password">
+    <div class="msg err" id="unlockMsg"></div>
+    <div class="btns"><button class="primary wide" id="unlockBtn">Unlock</button></div>
+  </div>
+</div>
+
+<!-- after-print confirmation -->
+<div class="sheetmodal" id="confirmModal">
+  <div class="card">
+    <h2 id="confirmTitle">Did it print correctly?</h2>
+    <p class="hint" id="confirmText"></p>
+    <div class="btns">
+      <button class="primary" style="flex:1" id="confOk">Yes, record it</button>
+      <button class="danger" style="flex:1" id="confVoid">No, record as VOID</button>
+    </div>
+    <div class="btns"><button class="wide" id="confCancel">It never printed (do not record)</button></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const APP_VERSION = "1.0.0";
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const store = {
+  get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } },
+  set(k,v){ try { localStorage.setItem(k,v); return true; } catch(e){ return false; } },
+  del(k){ try { localStorage.removeItem(k); } catch(e){} }
+};
+const K = { vault:"cw.vault.v1", settings:"cw.settings.v1", font:"cw.font.v1" };
+
+/* ============ encryption: AES-256-GCM, key from PBKDF2-SHA256 (600k rounds) ============ */
+const b64 = buf => { const u = new Uint8Array(buf); let s = ""; for (let i=0;i<u.length;i+=0x8000) s += String.fromCharCode.apply(null, u.subarray(i,i+0x8000)); return btoa(s); };
+const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+async function deriveKey(pass, salt){
+  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pass), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey({name:"PBKDF2", salt, iterations:600000, hash:"SHA-256"}, base, {name:"AES-GCM", length:256}, false, ["encrypt","decrypt"]);
+}
+async function encryptJSON(obj, key, salt){
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({name:"AES-GCM", iv}, key, new TextEncoder().encode(JSON.stringify(obj)));
+  return {v:1, salt:b64(salt), iv:b64(iv), ct:b64(ct)};
+}
+async function decryptBlob(blob, pass){
+  const salt = unb64(blob.salt), key = await deriveKey(pass, salt);
+  const pt = await crypto.subtle.decrypt({name:"AES-GCM", iv:unb64(blob.iv)}, key, unb64(blob.ct));
+  return { data: JSON.parse(new TextDecoder().decode(pt)), key, salt };
+}
+let vaultKey = null, vaultSalt = null;
+async function save(){
+  if (!vaultKey) return;
+  const blob = await encryptJSON(state.data, vaultKey, vaultSalt);
+  if (!store.set(K.vault, JSON.stringify(blob))) alert("This device would not save your data. Free up storage and try again.");
+}
+
+/* ============ state ============ */
+const defaultSettings = { checkTop:7.5, dx:0, dy:0, mdx:0, mdy:0, guides:false, stubs:true, fsize:12, fmap:"ABCD",
+                          kx:1, ky:1, ox:0, oy:0, rotate:false };
+const emptyData = () => ({ profiles:[], register:[], lastBackup:null });
+const state = { data: emptyData(), current:null, settings:Object.assign({}, defaultSettings, JSON.parse(store.get(K.settings) || "{}")) };
+let printMode = "check";   // check | void | calib | edge
+let userFontLoaded = false;
+
+/* ============ helpers ============ */
+function abaValid(r){
+  if (!/^\d{9}$/.test(r)) return false;
+  const d = r.split("").map(Number);
+  return (3*(d[0]+d[3]+d[6]) + 7*(d[1]+d[4]+d[7]) + (d[2]+d[5]+d[8])) % 10 === 0;
+}
+function parseAmount(s){
+  s = String(s || "").replace(/[$,\s]/g, "");
+  if (!/^\d+(\.\d{0,2})?$/.test(s)) return null;
+  const c = Math.round(parseFloat(s) * 100); return c > 0 ? c : null;
+}
+function parseMeasure(s){   // "1.06", "1 1/16", "15/16"
+  s = String(s || "").trim().replace(/["in]+$/i, "").trim(); if (!s) return null;
+  let m = s.match(/^(\d+)\s+(\d+)\/(\d+)$/); if (m) return +m[1] + (+m[2])/(+m[3]);
+  m = s.match(/^(\d+)\/(\d+)$/); if (m) return (+m[1])/(+m[2]);
+  const v = parseFloat(s); return isNaN(v) ? null : v;
+}
+const money = c => (c/100).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+const ONES=["","One","Two","Three","Four","Five","Six","Seven","Eight","Nine","Ten","Eleven","Twelve","Thirteen","Fourteen","Fifteen","Sixteen","Seventeen","Eighteen","Nineteen"];
+const TENS=["","","Twenty","Thirty","Forty","Fifty","Sixty","Seventy","Eighty","Ninety"];
+function w999(n){ const o=[]; if (n>=100){ o.push(ONES[Math.floor(n/100)]+" Hundred"); n%=100; }
+  if (n>=20) o.push(TENS[Math.floor(n/10)] + (n%10 ? "-"+ONES[n%10] : "")); else if (n) o.push(ONES[n]); return o.join(" "); }
+function amountWords(cents){
+  let d = Math.floor(cents/100); const c = String(cents%100).padStart(2,"0");
+  if (!d) return `Zero and ${c}/100`;
+  const parts=[]; for (const [v,n] of [[1e9,"Billion"],[1e6,"Million"],[1e3,"Thousand"],[1,""]]) { const q=Math.floor(d/v); if (q){ parts.push(w999(q)+(n?" "+n:"")); d%=v; } }
+  return `${parts.join(" ")} and ${c}/100`;
+}
+const fmtDate = iso => { if (!iso) return ""; const [y,m,d] = iso.split("-"); return `${m}/${d}/${y}`; };
+const today = () => new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
+function flash(id, text, err){ const el=$(id); el.className = "msg " + (err ? "err" : "ok"); el.textContent = text; }
+
+/* ============ MICR line, ANSI X9 E-13B positioning ============
+   Fixed 0.125" pitch. Position 1 is rightmost, its right edge 5/16" from the check's right edge.
+   Characters sit 3/16" above the check's bottom edge. */
+const PITCH=0.125, POS1=0.3125, MICR_BOTTOM=0.1875, GLYPH_H=0.117;
+const GLYPHS = { // approximate shapes on a 7 x 9 grid; load a real E-13B font for live checks
+  "0":[[0,0,7,1],[0,8,7,1],[0,0,2,9],[5,0,2,9]], "1":[[1,0,4,1],[3,0,2,7],[2,6,5,3]],
+  "2":[[0,0,7,1],[5,0,2,4],[0,3,7,1],[0,3,3,6],[0,7,7,2]], "3":[[0,0,6,1],[4,0,2,4],[1,3,5,1],[4,3,3,6],[0,8,7,1]],
+  "4":[[0,0,2,5],[0,4,7,2],[4,2,3,7]], "5":[[0,0,6,1],[0,0,2,4],[0,3,7,1],[4,3,3,6],[0,8,7,1]],
+  "6":[[0,0,4,1],[0,0,3,9],[0,4,7,1],[5,4,2,5],[0,8,7,1]], "7":[[0,0,7,1],[5,0,2,4],[3,3,4,1],[3,3,3,6]],
+  "8":[[1,0,5,1],[1,0,2,4],[4,0,2,4],[0,3,7,1],[0,3,3,6],[5,3,2,6],[0,8,7,1]], "9":[[0,0,7,1],[0,0,2,5],[4,0,3,9],[0,4,7,1]],
+  "T":[[0,0,2,9],[4,1,3,3],[4,5,3,3]], "U":[[0,0,2,6],[3,0,2,6],[5,7,2,2]],
+  "A":[[0,1,1,7],[2,1,3,3],[2,5,3,3],[6,1,1,7]], "D":[[0,3,3,3],[4,3,3,3]]
+};
+function micrChars(p, num){
+  const out = [], put = (str, rightPos) => { const a = str.split(""); a.forEach((ch,i) => out.push({pos: rightPos + (a.length-1-i), ch})); };
+  const acct = String(p.account||"").replace(/\D/g,""), routing = String(p.routing||"").replace(/\D/g,""), n = String(num||"").replace(/\D/g,"");
+  put("T"+routing+"T", 33);
+  if (p.format === "business") { put(acct+"U", 14); if (n) put("U"+n.padStart(6,"0")+"U", 45); }
+  else put(acct+"U"+n, 14);
+  return out;
+}
+function micrHTML(p, num){
+  const s = state.settings, map = {T:s.fmap[0]||"A", A:s.fmap[1]||"B", U:s.fmap[2]||"C", D:s.fmap[3]||"D"};
+  return micrChars(p, num).map(({pos,ch}) => {
+    const right = POS1 + (pos-1)*PITCH - s.mdx, bottom = MICR_BOTTOM - s.mdy;
+    if (userFontLoaded) return `<span class="micrch" style="right:${right}in;bottom:${bottom}in;font-family:UserMICR;font-size:${s.fsize}pt;line-height:1">${esc(/\d/.test(ch)?ch:map[ch])}</span>`;
+    const r = (GLYPHS[ch]||[]).map(g=>`<rect x="${g[0]}" y="${g[1]}" width="${g[2]}" height="${g[3]}"/>`).join("");
+    return `<svg class="micrch" viewBox="0 0 7 9" style="right:${right}in;bottom:${bottom}in;width:.091in;height:${GLYPH_H}in">${r}</svg>`;
+  }).join("");
+}
+
+/* ============ sheet rendering ============ */
+const profile = () => state.current === null ? null : state.data.profiles[state.current];
+function draft(){ return { date:$("c_date").value, num:$("c_num").value.replace(/\D/g,""), payee:$("c_payee").value.trim(),
+  cents:parseAmount($("c_amount").value), memo:$("c_memo").value.trim(), stub:$("c_stub").value.trim() }; }
+const STARS = "*".repeat(160);
+function stubHTML(top, p, c, label){
+  return `<div class="sec ${state.settings.guides?'guide':''}" style="top:${top}in;height:3.5in">
+    <div class="abs" style="left:.5in;top:.4in;font-size:10pt;font-weight:600">${esc(p.name)}</div>
+    <div class="abs lbl" style="left:.5in;top:.62in">${esc(p.nick || p.bank)} &middot; ${esc(label)}</div>
+    <div class="abs" style="right:.5in;top:.4in;font-size:11pt;font-weight:600">${c.num ? "No. "+esc(c.num) : ""}</div>
+    <table class="stub" style="position:absolute;left:.5in;top:1in;width:7.5in;font-size:10pt;border-collapse:collapse">
+      <tr><td class="lbl" style="width:1.3in">Date</td><td>${esc(fmtDate(c.date))}</td></tr>
+      <tr><td class="lbl">Pay to</td><td>${esc(c.payee)}</td></tr>
+      <tr><td class="lbl">Amount</td><td>${c.cents ? "$"+money(c.cents) : ""}</td></tr>
+      <tr><td class="lbl">Memo</td><td>${esc(c.memo)}</td></tr>
+      <tr><td class="lbl">Note</td><td>${esc(c.stub)}</td></tr>
+      <tr><td class="lbl">Account</td><td>ending ${esc(String(p.account||"").slice(-4))}</td></tr>
+    </table></div>`;
+}
+function checkHTML(top, p, c, isVoid){
+  const s = state.settings, n = c.cents ? money(c.cents) : "", box = n ? "*".repeat(Math.max(0, 12-n.length)) + n : "", words = c.cents ? amountWords(c.cents) : "";
+  return `<div class="sec ${s.guides?'guide':''}" style="top:${top}in;height:3.5in">
+    <div class="abs" style="left:.35in;top:.3in;font-size:10pt;line-height:1.25"><b>${esc(p.name)}</b><br>${esc(p.addr1)}<br>${esc(p.addr2)}</div>
+    <div class="abs" style="left:3.6in;top:.3in;width:2.2in;font-size:9pt;line-height:1.25;text-align:center;white-space:normal"><b>${esc(p.bank)}</b><br>${esc(p.bankcity)}</div>
+    <div class="abs" style="right:.35in;top:.3in;text-align:right;line-height:1.3"><div style="font-size:12pt;font-weight:700">${esc(c.num)}</div><div style="font-size:7.5pt">${esc(p.frac)}</div></div>
+    <div class="abs" style="left:5.6in;top:.95in;font-size:8pt">DATE</div>
+    <div class="abs uline" style="left:6.05in;top:.82in;width:2.1in;font-size:11pt;text-align:center">${esc(fmtDate(c.date))}</div>
+    <div class="abs lbl" style="left:.35in;top:1.3in;line-height:1.1">Pay to the<br>order of</div>
+    <div class="abs uline fill" style="left:1.15in;top:1.3in;width:5.35in;font-size:11pt"><span class="txt">${esc(c.payee)}</span><span class="stars">${c.payee?STARS:""}</span></div>
+    <div class="abs" style="left:6.65in;top:1.24in;width:1.5in;height:.32in;border:1pt solid #000;font-size:11.5pt;font-weight:700;display:flex;align-items:center;padding-left:4px">$&nbsp;<span style="font-family:'Courier New',monospace">${esc(box)}</span></div>
+    <div class="abs uline fill" style="left:.35in;top:1.8in;width:7.1in;font-size:10.5pt"><span class="txt">${esc(words)}</span><span class="stars">${words?STARS:""}</span></div>
+    <div class="abs lbl" style="left:7.5in;top:1.88in">Dollars</div>
+    <div class="abs lbl" style="left:.35in;top:2.62in">Memo</div>
+    <div class="abs uline" style="left:.8in;top:2.5in;width:3.3in;font-size:10pt">${esc(c.memo)}</div>
+    <div class="abs uline" style="left:4.9in;top:2.5in;width:3.25in;height:.2in"></div>
+    <div class="abs lbl" style="left:4.9in;top:2.73in;width:3.25in;text-align:center">Authorized signature</div>
+    ${micrHTML(p, c.num)}
+    ${isVoid ? `<div class="voidstamp" style="left:2.2in;top:.9in">VOID</div>` : ""}
+  </div>`;
+}
+function calibHTML(){
+  return `<div class="abs" style="left:1in;top:1in;width:6in;height:2pt;background:#000;transform:translateY(-1pt)"></div>
+    <div class="abs" style="left:1in;top:1in;width:2pt;height:8in;background:#000;transform:translateX(-1pt)"></div>
+    <div class="abs" style="left:.8in;top:1in;width:.4in;height:1pt;background:#000"></div>
+    <div class="abs" style="left:1in;top:.8in;width:1pt;height:.4in;background:#000"></div>
+    <div class="abs" style="left:1.15in;top:.72in;font-size:9pt">+ is the corner where the two bars meet</div>
+    <div class="abs" style="left:1.3in;top:1.25in;font-size:11pt;line-height:1.6;white-space:normal;width:5.5in">
+      <b>Measuring sheet</b><br>A: left paper edge to the + (should be 1 in)<br>B: top paper edge to the + (should be 1 in)<br>
+      C: length of the horizontal bar (should be 6 in)<br>D: length of the vertical bar (should be 8 in)<br><br>Enter what you actually measure in the app.</div>`;
+}
+function edgeHTML(){
+  const marks = [[0.125,"1/8"],[0.1875,"3/16 (bank line)"],[0.25,"1/4"],[0.375,"3/8"]];
+  let h = `<div class="abs" style="left:2in;top:5in;font-size:12pt;width:4.5in;white-space:normal;line-height:1.5"><b>Edge test</b><br>
+    Lines are measured from the paper edge. Note which ones printed fully at the BOTTOM and at the TOP.</div>`;
+  marks.forEach(([d,l], i) => {   // each line spans its own stretch so they are easy to tell apart
+    const x = 0.5 + i*1.9;
+    h += `<div class="abs" style="left:${x}in;bottom:${d}in;width:1.7in;height:1pt;background:#000"></div><div class="abs" style="left:${x}in;bottom:${d+0.04}in;font-size:7pt">bottom ${l}</div>`;
+    h += `<div class="abs" style="left:${x}in;top:${d}in;width:1.7in;height:1pt;background:#000"></div><div class="abs" style="left:${x}in;top:${d+0.04}in;font-size:7pt">top ${l}</div>`;
+  });
+  return h;
+}
+function sampleProfile(){ return { name:"Your Name", addr1:"Street address", addr2:"City, ST 00000", bank:"Your Bank", bankcity:"City, ST", routing:"011000015", account:"000000000", frac:"", format:"personal", nick:"Sample" }; }
+function render(){
+  const s = state.settings, p = profile() || sampleProfile(), c = draft();
+  let html;
+  if (printMode === "calib") html = calibHTML();
+  else if (printMode === "edge") html = edgeHTML();
+  else html = `<div style="position:absolute;left:${s.dx}in;top:${s.dy}in;width:8.5in;height:11in">
+      ${s.stubs ? stubHTML(0,p,c,"Payee copy") + stubHTML(4.0,p,c,"Your records") : ""}${checkHTML(s.checkTop,p,c, printMode==="void" || !profile())}</div>`;
+  $("rot").innerHTML = html;
+  // Rotation and printer correction apply to real checks and the edge test, never to the measuring sheet
+  const rotate = s.rotate && printMode !== "calib";
+  $("rot").style.transform = rotate ? "rotate(180deg)" : "none";
+  const root = document.documentElement.style;
+  if (printMode === "calib") { root.setProperty("--calib","none"); root.setProperty("--printW","8.4in"); root.setProperty("--printH","10.9in"); }
+  else {
+    // paper point t should land at o + k*d, so draw at d = (t - o) / k
+    root.setProperty("--calib", `translate(${-s.ox/s.kx}in, ${-s.oy/s.ky}in) scale(${1/s.kx}, ${1/s.ky})`);
+    // Size the page to what can land on paper, without assuming the far margins match the near ones
+    root.setProperty("--printW", Math.max(1, (8.5 - s.ox)/s.kx - 0.02) + "in");
+    root.setProperty("--printH", Math.max(1, (11 - s.oy)/s.ky - 0.02) + "in");
+  }
+  fitPreview();
+}
+function fitPreview(){
+  const wrap = $("previewWrap"), sc = $("scaler"), sheet = $("sheet");
+  if (!wrap.clientWidth) return;
+  const k = Math.min(1, (wrap.clientWidth - 20) / sheet.offsetWidth);
+  sc.style.transform = `scale(${k})`; sc.style.width = sheet.offsetWidth*k + "px"; sc.style.height = sheet.offsetHeight*k + "px";
+}
+
+/* ============ navigation ============ */
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
+  document.querySelectorAll(".page").forEach(pg => pg.classList.toggle("on", pg.id === "pg-"+b.dataset.pg));
+  if (b.dataset.pg === "write") { printMode = "check"; render(); }
+  if (b.dataset.pg === "register") renderRegister();
+  if (b.dataset.pg === "security") renderBackupStatus();
+  scrollTo(0,0);
+});
+function go(pg){ document.querySelector(`nav button[data-pg="${pg}"]`).click(); }
+
+/* ============ accounts ============ */
+const PF = {nick:"p_nick",name:"p_name",addr1:"p_addr1",addr2:"p_addr2",bank:"p_bank",bankcity:"p_bankcity",frac:"p_frac",routing:"p_routing",account:"p_account",next:"p_next"};
+function readProfileForm(){ const p = {}; for (const k in PF) p[k] = $(PF[k]).value.trim();
+  p.routing = p.routing.replace(/\D/g,""); p.account = p.account.replace(/\D/g,""); p.next = p.next.replace(/\D/g,"") || "1001"; p.format = $("p_format").value; return p; }
+function fillProfileForm(p){ for (const k in PF) $(PF[k]).value = (p && p[k]) || ""; $("p_format").value = (p && p.format) || "personal"; if (!p) $("p_next").value = "1001"; }
+function acctLabel(p){ return `${p.nick || p.bank || "Account"} ...${String(p.account).slice(-4)}`; }
+function refreshAccountLists(){
+  const opts = state.data.profiles.map((p,i)=>`<option value="${i}">${esc(acctLabel(p))}</option>`).join("");
+  $("acctSel").innerHTML = opts || `<option value="">Add an account first</option>`;
+  $("profileSel").innerHTML = opts + `<option value="new">+ New account</option>`;
+  $("regAcct").innerHTML = `<option value="all">All accounts</option>` + opts;
+  if (state.current !== null) { $("acctSel").value = state.current; $("profileSel").value = state.current; }
+  else $("profileSel").value = "new";
+  const payees = [...new Set(state.data.register.map(r=>r.payee))].slice(0,200);
+  $("payeeList").innerHTML = payees.map(p=>`<option value="${esc(p)}">`).join("");
+}
+function selectAccount(i){
+  state.current = (i === "" || i === "new" || i === null) ? null : Number(i);
+  fillProfileForm(profile()); $("c_num").value = profile() ? profile().next : "";
+  refreshAccountLists(); render();
+}
+$("acctSel").onchange = e => selectAccount(e.target.value);
+$("profileSel").onchange = e => selectAccount(e.target.value);
+$("newProfile").onclick = () => selectAccount("new");
+$("p_routing").addEventListener("input", () => { const r = $("p_routing").value.replace(/\D/g,"");
+  if (r.length === 9 && !abaValid(r)) flash("profileMsg","That routing number fails the bank checksum. Double check it.",true); else $("profileMsg").textContent = ""; });
+$("saveProfile").onclick = async () => {
+  const p = readProfileForm();
+  if (!p.name) return flash("profileMsg","Enter the name on the account.",true);
+  if (!abaValid(p.routing)) return flash("profileMsg","Enter a valid 9-digit routing number.",true);
+  if (p.account.length < 4) return flash("profileMsg","Enter the account number.",true);
+  if (state.current === null) { state.data.profiles.push(p); state.current = state.data.profiles.length - 1; }
+  else state.data.profiles[state.current] = p;
+  await save(); $("c_num").value = p.next; refreshAccountLists(); render();
+  flash("profileMsg","Saved and encrypted.",false);
+};
+$("delProfile").onclick = async () => {
+  if (state.current === null) return;
+  if (!confirm("Delete this account? Its checks stay in the register.")) return;
+  state.data.profiles.splice(state.current,1); await save();
+  selectAccount(state.data.profiles.length ? 0 : "new");
+};
+
+/* ============ printing ============ */
+function doPrint(mode){
+  printMode = mode; render();
+  // Let layout settle before opening the print dialog (iOS needs a beat)
+  return new Promise(res => setTimeout(() => { window.print(); setTimeout(res, 300); }, 150));
+}
+$("printBtn").onclick = async () => {
+  const p = profile(), c = draft();
+  if (!p) { flash("checkMsg","Add your bank account first (Accounts tab).",true); return; }
+  const miss = [];
+  if (!c.num) miss.push("check number"); if (!c.date) miss.push("date"); if (!c.payee) miss.push("payee"); if (!c.cents) miss.push("amount");
+  if (miss.length) return flash("checkMsg","Missing: " + miss.join(", "),true);
+  if (state.data.register.some(r => r.num === c.num && r.acct === p.account.slice(-4) && r.routing === p.routing)
+      && !confirm(`Check #${c.num} is already in your register for this account. Print anyway?`)) return;
+  if (c.cents >= 1000000 && !confirm(`This check is for $${money(c.cents)}. Continue?`)) return;
+  $("checkMsg").textContent = "";
+  await doPrint("check");
+  $("confirmText").textContent = `Check #${c.num} to ${c.payee} for $${money(c.cents)}.`;
+  $("confirmModal").classList.add("on");
+  pendingCheck = {p, c};
+};
+let pendingCheck = null;
+async function recordPending(status){
+  $("confirmModal").classList.remove("on");
+  if (!pendingCheck) return;
+  const {p, c} = pendingCheck; pendingCheck = null;
+  if (status) {
+    state.data.register.unshift({ id:crypto.getRandomValues(new Uint32Array(2)).join("-"), ts:new Date().toISOString(), date:c.date, num:c.num,
+      payee:c.payee, cents:c.cents, memo:c.memo, note:c.stub, acct:p.account.slice(-4), routing:p.routing, nick:p.nick || p.bank, status });
+    const next = String(Number(c.num) + 1);
+    const idx = state.data.profiles.indexOf(p); if (idx >= 0) state.data.profiles[idx].next = next;
+    $("c_num").value = next; $("p_next").value = next;
+    if (status === "issued") ["c_payee","c_amount","c_memo","c_stub"].forEach(id => $(id).value = "");
+    await save(); refreshAccountLists();
+  }
+  printMode = "check"; render();
+}
+$("confOk").onclick = () => recordPending("issued");
+$("confVoid").onclick = () => recordPending("void");
+$("confCancel").onclick = () => recordPending(null);
+$("testBtn").onclick = async () => { await doPrint("void"); printMode = "check"; render(); };
+$("clearBtn").onclick = () => { ["c_payee","c_amount","c_memo","c_stub"].forEach(id => $(id).value = ""); render(); };
+["c_date","c_num","c_payee","c_amount","c_memo","c_stub"].forEach(id => $(id).addEventListener("input", () => {
+  if (id === "c_amount") { const v = $("c_amount").value; flash("checkMsg", v && !parseAmount(v) ? "Amount should look like 125.00" : "", true); }
+  render(); }));
+
+/* ============ register ============ */
+function renderRegister(){
+  const sel = $("regAcct").value, q = $("regSearch").value.trim().toLowerCase();
+  const acctFilter = sel === "all" || sel === "" ? null : state.data.profiles[+sel];
+  const rows = state.data.register.filter(r => (!acctFilter || (r.acct === acctFilter.account.slice(-4) && r.routing === acctFilter.routing))
+    && (!q || [r.payee, r.memo, r.note, r.num].join(" ").toLowerCase().includes(q)));
+  const live = rows.filter(r => r.status !== "void");
+  const out = live.filter(r => r.status === "issued").reduce((a,r)=>a+r.cents,0), all = live.reduce((a,r)=>a+r.cents,0);
+  $("regTotals").innerHTML = `<span>Checks: <b>${live.length}</b></span><span>Total written: <b>$${money(all)}</b></span><span>Not yet cleared: <b>$${money(out)}</b></span>`;
+  $("regList").innerHTML = rows.length ? rows.map(r => `<div class="reg-item ${r.status}" data-id="${r.id}">
+      <span class="n">#${esc(r.num)}</span><span class="payee">${esc(r.payee)}</span><span class="amt">$${money(r.cents)}</span>
+      <span class="sub">${esc(fmtDate(r.date))} &middot; ${esc(r.nick)} ...${esc(r.acct)}${r.memo ? " &middot; " + esc(r.memo) : ""}
+        &nbsp;<span class="pill ${r.status}">${r.status === "issued" ? "Outstanding" : r.status === "cleared" ? "Cleared" : "Void"}</span>
+        ${r.status === "issued" ? `<button data-act="cleared" style="padding:3px 8px;font-size:12px;margin-left:6px">Mark cleared</button>` : ""}
+        ${r.status !== "void" ? `<button data-act="void" style="padding:3px 8px;font-size:12px" class="danger">Void</button>` : ""}
+        ${r.status === "cleared" ? `<button data-act="issued" style="padding:3px 8px;font-size:12px">Undo</button>` : ""}
+      </span></div>`).join("") : `<p class="hint">No checks yet.</p>`;
+}
+$("regList").addEventListener("click", async e => {
+  const b = e.target.closest("button[data-act]"); if (!b) return;
+  const r = state.data.register.find(x => x.id === b.closest(".reg-item").dataset.id); if (!r) return;
+  if (b.dataset.act === "void" && !confirm(`Void check #${r.num} to ${r.payee}? Destroy the paper check if you have it.`)) return;
+  r.status = b.dataset.act; await save(); renderRegister();
+});
+$("regAcct").onchange = renderRegister; $("regSearch").oninput = renderRegister;
+$("exportCsv").onclick = () => {
+  const q = v => `"${String(v ?? "").replace(/"/g,'""')}"`;
+  const lines = [["Check #","Date","Payee","Amount","Memo","Note","Account","Status","Recorded"].join(",")].concat(
+    state.data.register.map(r => [r.num, fmtDate(r.date), r.payee, (r.cents/100).toFixed(2), r.memo, r.note, `${r.nick} ...${r.acct}`, r.status, r.ts].map(q).join(",")));
+  shareOrDownload(new Blob([lines.join("\r\n")], {type:"text/csv"}), `check-register-${today()}.csv`);
+};
+async function shareOrDownload(blob, name){
+  const file = new File([blob], name, {type: blob.type});
+  if (navigator.canShare && navigator.canShare({files:[file]})) {
+    try { await navigator.share({files:[file], title:name}); return true; } catch(e) { if (e.name === "AbortError") return false; }
+  }
+  const url = URL.createObjectURL(blob), a = document.createElement("a");
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000); return true;
+}
+
+/* ============ printer settings & calibration ============ */
+const SI = {checkTop:"s_checkTop", dx:"s_dx", dy:"s_dy", mdx:"s_mdx", mdy:"s_mdy", fsize:"s_fsize"};
+function saveSettings(){ store.set(K.settings, JSON.stringify(state.settings)); }
+function loadSettingsUI(){
+  for (const k in SI) $(SI[k]).value = state.settings[k];
+  $("s_guides").checked = state.settings.guides; $("s_rotate").checked = state.settings.rotate;
+  $("s_stubs").value = state.settings.stubs ? "1" : "0"; $("s_fmap").value = state.settings.fmap;
+  describeCalib();
+}
+Object.entries(SI).forEach(([k,id]) => $(id).addEventListener("input", () => { const v = parseFloat($(id).value); state.settings[k] = isNaN(v) ? defaultSettings[k] : v; saveSettings(); render(); }));
+$("s_guides").onchange = () => { state.settings.guides = $("s_guides").checked; saveSettings(); render(); };
+$("s_rotate").onchange = () => { state.settings.rotate = $("s_rotate").checked; saveSettings(); render(); };
+$("s_stubs").onchange = () => { state.settings.stubs = $("s_stubs").value === "1"; saveSettings(); render(); };
+$("s_fmap").addEventListener("input", () => { state.settings.fmap = ($("s_fmap").value || "ABCD").slice(0,4); saveSettings(); render(); });
+function describeCalib(){
+  const s = state.settings;
+  $("calibMsg").className = "msg ok";
+  $("calibMsg").textContent = (s.kx === 1 && s.ky === 1 && !s.ox && !s.oy) ? "No printer correction applied (right for computer printing with margins set to None)."
+    : `Correcting: shift ${s.ox.toFixed(3)} in right, ${s.oy.toFixed(3)} in down, size ${(s.kx*100).toFixed(1)}% x ${(s.ky*100).toFixed(1)}%.`;
+}
+$("calibPrint").onclick = async () => { await doPrint("calib"); printMode = "check"; render(); };
+$("edgePrint").onclick = async () => { await doPrint("edge"); printMode = "check"; render(); };
+$("calibSave").onclick = () => {
+  const px = parseMeasure($("m_px").value), py = parseMeasure($("m_py").value), lh = parseMeasure($("m_lh").value), lv = parseMeasure($("m_lv").value);
+  if ([px,py,lh,lv].some(v => v === null)) return flash("calibMsg","Fill in all four measurements.",true);
+  const kx = lh/6, ky = lv/8;
+  if (kx < 0.85 || kx > 1.1 || ky < 0.85 || ky > 1.1) return flash("calibMsg","Those bar lengths look off. Measure again in inches.",true);
+  Object.assign(state.settings, { kx, ky, ox: px - kx*1, oy: py - ky*1 });
+  saveSettings(); describeCalib(); render();
+};
+$("calibReset").onclick = () => { Object.assign(state.settings, {kx:1, ky:1, ox:0, oy:0}); ["m_px","m_py","m_lh","m_lv"].forEach(id=>$(id).value=""); saveSettings(); describeCalib(); render(); };
+
+/* ============ MICR font ============ */
+async function useFont(buf){
+  try { const f = new FontFace("UserMICR", buf); await f.load(); document.fonts.add(f); userFontLoaded = true;
+        $("fontStatus").textContent = "Using your loaded MICR font. Print a VOID test and compare it with a real check."; }
+  catch(e) { userFontLoaded = false; $("fontStatus").textContent = "That file could not be used as a font."; }
+  render();
+}
+$("fontFile").onchange = async e => { const f = e.target.files[0]; if (!f) return; const buf = await f.arrayBuffer(); store.set(K.font, b64(buf)); useFont(buf); };
+$("clearFont").onclick = () => { store.del(K.font); userFontLoaded = false; fontDefault(); render(); };
+function fontDefault(){ $("fontStatus").textContent = "Using built-in approximate glyphs. Fine for alignment tests; load a real E-13B font before printing live checks."; }
+
+/* ============ backup / restore ============ */
+function renderBackupStatus(){
+  const lb = state.data.lastBackup, n = state.data.register.length;
+  $("backupStatus").textContent = lb ? `Last backup: ${new Date(lb).toLocaleString()}.` : `No backup yet${n ? ` and you have ${n} check(s) recorded` : ""}.`;
+  $("versionLine").textContent = `Check Writer ${APP_VERSION}. Runs entirely on this device.`;
+}
+$("backupBtn").onclick = async () => {
+  state.data.lastBackup = new Date().toISOString(); await save();
+  const blob = JSON.parse(store.get(K.vault));
+  const file = { app:"check-writer", kind:"backup", version:1, created:state.data.lastBackup, vault:blob, settings:state.settings, font:store.get(K.font) };
+  const ok = await shareOrDownload(new Blob([JSON.stringify(file)], {type:"application/json"}), `check-writer-backup-${today()}.json`);
+  renderBackupStatus(); if (ok) flash("backupMsg","Backup created. Keep it somewhere safe like iCloud Drive.",false);
+};
+async function restoreFrom(file){
+  let obj; try { obj = JSON.parse(await file.text()); } catch(e) { return alert("That is not a Check Writer backup file."); }
+  if (obj.app !== "check-writer" || !obj.vault) return alert("That is not a Check Writer backup file.");
+  const pass = prompt("Passphrase for this backup:"); if (!pass) return;
+  try {
+    const { data, key, salt } = await decryptBlob(obj.vault, pass);
+    if (store.get(K.vault) && !confirm("Replace everything on this device with this backup?")) return;
+    store.set(K.vault, JSON.stringify(obj.vault)); if (obj.settings) store.set(K.settings, JSON.stringify(obj.settings)); if (obj.font) store.set(K.font, obj.font);
+    vaultKey = key; vaultSalt = salt; state.data = Object.assign(emptyData(), data);
+    if (obj.settings) state.settings = Object.assign({}, defaultSettings, obj.settings);
+    if (obj.font) useFont(unb64(obj.font).buffer);
+    afterUnlock(); alert("Backup restored.");
+  } catch(e) { alert("Wrong passphrase for that backup."); }
+}
+$("restoreBtn").onclick = () => $("restoreFile").click();
+$("setupRestore").onclick = () => $("restoreFile").click();
+$("restoreFile").onchange = e => { const f = e.target.files[0]; e.target.value = ""; if (f) restoreFrom(f); };
+
+/* ============ passphrase, lock, wipe ============ */
+$("pwChange").onclick = async () => {
+  const oldP = $("pwOld").value, newP = $("pwNew").value;
+  if (newP.length < 10) return flash("pwMsg","New passphrase needs 10+ characters.",true);
+  try { await decryptBlob(JSON.parse(store.get(K.vault)), oldP); } catch(e) { return flash("pwMsg","Current passphrase is wrong.",true); }
+  vaultSalt = crypto.getRandomValues(new Uint8Array(16)); vaultKey = await deriveKey(newP, vaultSalt); await save();
+  $("pwOld").value = $("pwNew").value = ""; flash("pwMsg","Passphrase changed. Make a new backup; old backups still use the old passphrase.",false);
+};
+$("wipeBtn").onclick = () => {
+  if (!confirm("Erase all accounts, the register, settings and the font from this device?")) return;
+  if (prompt('Type ERASE to confirm') !== "ERASE") return;
+  Object.values(K).forEach(k => store.del(k)); location.reload();
+};
+function lock(){
+  vaultKey = null; vaultSalt = null; state.data = emptyData(); state.current = null; pendingCheck = null;
+  ["c_payee","c_amount","c_memo","c_stub"].forEach(id => $(id).value = ""); fillProfileForm(null);
+  $("confirmModal").classList.remove("on"); showGate();
+}
+$("lockBtn").onclick = lock;
+function showGate(){
+  const has = !!store.get(K.vault);
+  $("gateSetup").style.display = has ? "none" : "block"; $("gateUnlock").style.display = has ? "block" : "none";
+  $("gate").classList.add("on"); setTimeout(() => (has ? $("unlockPw") : $("setupPw")).focus(), 50);
+}
+function afterUnlock(){
+  $("gate").classList.remove("on"); $("unlockPw").value = ""; $("unlockMsg").textContent = "";
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(()=>{});
+  loadSettingsUI();
+  selectAccount(state.data.profiles.length ? 0 : "new");
+  if (!state.data.profiles.length) go("accounts"); else go("write");
+  bumpIdle();
+}
+$("setupBtn").onclick = async () => {
+  const a = $("setupPw").value, b = $("setupPw2").value;
+  if (!window.crypto || !crypto.subtle) return flash("setupMsg","This browser cannot encrypt. Open the app over https in Safari or Chrome.",true);
+  if (a.length < 10) return flash("setupMsg","Use at least 10 characters.",true);
+  if (a !== b) return flash("setupMsg","The two entries do not match.",true);
+  $("setupBtn").disabled = true;
+  vaultSalt = crypto.getRandomValues(new Uint8Array(16)); vaultKey = await deriveKey(a, vaultSalt);
+  state.data = emptyData(); await save(); $("setupBtn").disabled = false; $("setupPw").value = $("setupPw2").value = "";
+  if (!store.get(K.vault)) return flash("setupMsg","This browser would not save data. If you are in Private Browsing, switch to a normal tab.",true);
+  afterUnlock();
+};
+$("unlockBtn").onclick = async () => {
+  $("unlockBtn").disabled = true; $("unlockMsg").textContent = "";
+  try { const r = await decryptBlob(JSON.parse(store.get(K.vault)), $("unlockPw").value);
+        vaultKey = r.key; vaultSalt = r.salt; state.data = Object.assign(emptyData(), r.data); afterUnlock(); }
+  catch(e) { $("unlockMsg").textContent = "Wrong passphrase."; }
+  $("unlockBtn").disabled = false;
+};
+$("unlockPw").addEventListener("keydown", e => { if (e.key === "Enter") $("unlockBtn").click(); });
+$("setupPw2").addEventListener("keydown", e => { if (e.key === "Enter") $("setupBtn").click(); });
+
+// Auto-lock: 5 minutes idle, or 2 minutes after leaving the app
+let idleTimer, hiddenAt = 0;
+function bumpIdle(){ clearTimeout(idleTimer); if (vaultKey) idleTimer = setTimeout(lock, 5*60*1000); }
+["pointerdown","keydown","touchstart"].forEach(ev => addEventListener(ev, bumpIdle, {passive:true}));
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) hiddenAt = Date.now();
+  else if (vaultKey && hiddenAt && Date.now() - hiddenAt > 2*60*1000) lock();
+});
+addEventListener("resize", fitPreview);
+addEventListener("afterprint", () => { if (printMode !== "check" && !$("confirmModal").classList.contains("on")) { printMode = "check"; render(); } });
+
+/* ============ start ============ */
+(function init(){
+  $("c_date").value = today();
+  const f = store.get(K.font); if (f) useFont(unb64(f).buffer); else fontDefault();
+  loadSettingsUI(); refreshAccountLists(); render(); showGate();
+  if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(()=>{});
+})();
+</script>
+</body>
+</html>
