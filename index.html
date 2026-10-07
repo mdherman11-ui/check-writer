@@ -279,20 +279,35 @@
 
 <!-- first run / unlock -->
 <div class="overlay" id="gate">
-  <div class="card" id="gateSetup" style="display:none">
+  <form class="card" id="gateSetup" style="display:none" autocomplete="on">
     <h2>Welcome</h2>
-    <p class="hint">Create a passphrase. It encrypts your bank details and check history on this device. Use something long that you will not forget, and save it in your password manager.</p>
-    <label>Passphrase (10+ characters)</label><input type="password" id="setupPw" autocomplete="new-password">
-    <label>Type it again</label><input type="password" id="setupPw2" autocomplete="new-password">
+    <p class="hint">Create a passphrase. It encrypts your bank details and check history on this device. It cannot be recovered, so let iPhone save it to Passwords when asked.</p>
+    <label>Name for this login in Passwords</label><input type="text" id="setupUser" name="username" autocomplete="username" value="Check Writer">
+    <label>Passphrase (10+ characters)</label><input type="password" id="setupPw" name="password" autocomplete="new-password">
+    <label>Type it again</label><input type="password" id="setupPw2" name="password-confirm" autocomplete="new-password">
     <div class="msg err" id="setupMsg"></div>
-    <div class="btns"><button class="primary wide" id="setupBtn">Create</button></div>
-    <div class="btns"><button class="wide" id="setupRestore">Restore from a backup instead</button></div>
-  </div>
-  <div class="card" id="gateUnlock" style="display:none">
+    <div class="btns"><button type="submit" class="primary wide" id="setupBtn">Create</button></div>
+    <div class="btns"><button type="button" class="wide" id="setupRestore">Restore from a backup instead</button></div>
+  </form>
+  <form class="card" id="gateUnlock" style="display:none" autocomplete="on">
     <h2>Unlock</h2>
-    <label>Passphrase</label><input type="password" id="unlockPw" autocomplete="current-password">
+    <input type="text" name="username" autocomplete="username" value="Check Writer" style="position:absolute;opacity:0;height:0;width:0;pointer-events:none" tabindex="-1" aria-hidden="true">
+    <label>Passphrase</label><input type="password" id="unlockPw" name="password" autocomplete="current-password">
     <div class="msg err" id="unlockMsg"></div>
-    <div class="btns"><button class="primary wide" id="unlockBtn">Unlock</button></div>
+    <div class="btns"><button type="submit" class="primary wide" id="unlockBtn">Unlock</button></div>
+    <div class="btns"><button type="button" class="wide" id="forgotBtn">Forgot passphrase?</button></div>
+  </form>
+  <div class="card" id="gateForgot" style="display:none">
+    <h2>Forgot passphrase</h2>
+    <p class="hint">Your data is encrypted with the passphrase, so it cannot be recovered or reset. You can either:</p>
+    <ol class="hint">
+      <li><b>Restore a backup</b>, if you saved one, using that backup's passphrase.</li>
+      <li><b>Erase this device</b> and start over. This deletes the saved accounts and check register on this phone. Your printer settings and MICR font are kept.</li>
+    </ol>
+    <label>Type ERASE to erase and start over</label><input type="text" id="forgotConfirm" autocomplete="off" autocapitalize="characters">
+    <div class="msg err" id="forgotMsg"></div>
+    <div class="btns"><button class="danger" style="flex:1" id="forgotErase">Erase and start over</button><button style="flex:1" id="forgotRestore">Restore backup</button></div>
+    <div class="btns"><button class="wide" id="forgotBack">Back to unlock</button></div>
   </div>
 </div>
 
@@ -325,7 +340,7 @@
 
 <script>
 "use strict";
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.2.0";
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const store = {
@@ -942,7 +957,7 @@ function lock(){
 $("lockBtn").onclick = lock;
 function showGate(){
   const has = !!store.get(K.vault);
-  $("gateSetup").style.display = has ? "none" : "block"; $("gateUnlock").style.display = has ? "block" : "none";
+  $("gateSetup").style.display = has ? "none" : "block"; $("gateUnlock").style.display = has ? "block" : "none"; $("gateForgot").style.display = "none";
   $("gate").classList.add("on"); setTimeout(() => (has ? $("unlockPw") : $("setupPw")).focus(), 50);
 }
 function afterUnlock(){
@@ -953,7 +968,8 @@ function afterUnlock(){
   if (!state.data.profiles.length) go("accounts"); else go("write");
   bumpIdle();
 }
-$("setupBtn").onclick = async () => {
+$("gateSetup").onsubmit = async e => {
+  e.preventDefault();
   const a = $("setupPw").value, b = $("setupPw2").value;
   if (!window.crypto || !crypto.subtle) return flash("setupMsg","This browser cannot encrypt. Open the app over https in Safari or Chrome.",true);
   if (a.length < 10) return flash("setupMsg","Use at least 10 characters.",true);
@@ -964,15 +980,25 @@ $("setupBtn").onclick = async () => {
   if (!store.get(K.vault)) return flash("setupMsg","This browser would not save data. If you are in Private Browsing, switch to a normal tab.",true);
   afterUnlock();
 };
-$("unlockBtn").onclick = async () => {
+$("gateUnlock").onsubmit = async e => {
+  e.preventDefault();
   $("unlockBtn").disabled = true; $("unlockMsg").textContent = "";
   try { const r = await decryptBlob(JSON.parse(store.get(K.vault)), $("unlockPw").value);
         vaultKey = r.key; vaultSalt = r.salt; state.data = Object.assign(emptyData(), r.data); afterUnlock(); }
   catch(e) { $("unlockMsg").textContent = "Wrong passphrase."; }
   $("unlockBtn").disabled = false;
 };
-$("unlockPw").addEventListener("keydown", e => { if (e.key === "Enter") $("unlockBtn").click(); });
-$("setupPw2").addEventListener("keydown", e => { if (e.key === "Enter") $("setupBtn").click(); });
+
+
+/* forgot passphrase: data cannot be decrypted without it, so offer restore or a clean start */
+$("forgotBtn").onclick = () => { $("gateUnlock").style.display = "none"; $("gateForgot").style.display = "block"; $("forgotConfirm").value = ""; $("forgotMsg").textContent = ""; };
+$("forgotBack").onclick = () => showGate();
+$("forgotRestore").onclick = () => $("restoreFile").click();
+$("forgotErase").onclick = () => {
+  if ($("forgotConfirm").value.trim().toUpperCase() !== "ERASE") { $("forgotMsg").textContent = "Type ERASE in the box first."; return; }
+  store.del(K.vault); vaultKey = null; vaultSalt = null; state.data = emptyData(); state.current = null;
+  showGate();
+};
 
 // Auto-lock: 5 minutes idle, or 2 minutes after leaving the app
 let idleTimer, hiddenAt = 0;
